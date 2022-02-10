@@ -2,6 +2,7 @@ import json
 import random
 from sqlitedict import SqliteDict
 
+
 class RandomList:
     # O(1) insertion of an item and O(1) pop of a random item
     def __init__(self, items = []):
@@ -12,27 +13,28 @@ class RandomList:
         self._items.extend(items)
     def clear(self):
         self._items.clear()
-    def pop_random(self, item):
-        # choose a random index
+    def pop_random(self):
+        # only deletes from end of list to ensure O(1) pop
         index = random.randint(0, len(self._items) - 1)
-        # save the item at that index
         item = self._items[index]
-        # replace that index with the last item
         self._items[index] = self._items[-1]
-        # shorten the list by 1
         self._items.pop()
-        # return the saved item
         return item
     def __len__(self):
         return len(self._items)
     def __list__(self):
         return self._items
+    def __iter__(self):
+        return self._items.__iter__()
 
 class Deck:
-    def __init__(self, dict_search, levels_file, default_level=1, weights=None):
 
-        # user-defined function which returns the associated value given the key, and raises KeyError if the key does not exist
-        self._dict_search = dict_search
+
+        
+        
+
+    def __init__(self, levels_file, default_level=1, weights=None):
+
         self._drew = False
 
         # no need to know the words that have been deleted or completed, only the amount of each
@@ -57,32 +59,24 @@ class Deck:
             decode=json.loads,
         )
         
-        try:
-            self._weights = self._leveldb['__weights__']
-        except KeyError:
-            if weights:
-                if len(weights) > 0:
-                    self._leveldb['__weights__'] = weights
-                    self._weights = weights
-                else:
-                    raise ValueError('At least one weight is needed')
+        if weights:
+            if len(weights) > 0:
+                self._leveldb['__weights__'] = weights
+                self._weights = weights
             else:
-                raise KeyError('Weights not in level_file, nor is it provided')
+                raise ValueError('At least one weight is needed')
+        else:
+            self._weights = self._leveldb['__weights__']
+
 
         self.set_default_level(default_level)
 
         self._levels = [RandomList() for _ in range(len(self._weights))]
 
-        for key in self._leveldb:
+        for key, level in self._leveldb.items():
 
             if key == '__weights__':
                 continue
-
-            # ensure missing keys are found
-            self._dict_search(key)
-
-            level = self._level[key]
-
 
             if level >= len(self._weights) or level < -2:
                 raise ValueError(f'Key "{key}" has invalid level "{level}"')
@@ -93,7 +87,6 @@ class Deck:
             elif level == -2:
                 self._deleted_count += 1
  
-
     def set_default_level(self, new_default_level):
         if new_default_level < 0:
             raise ValueError('Default level must be positive')
@@ -118,27 +111,27 @@ class Deck:
         self._weights = new_weights
 
 
-    def draw(self) -> tuple:
+    def draw(self) -> str:
         '''
-        Returns a 2-tuple (key, value), if all keys are either deleted or completed, then return (None, None)
+        Returns a string of the drawn key; returns `None` if all keys are either deleted or completed
         '''
-
+        # if a word was already drawn, then return the same wrod
         if self._drew:
-            raise Exception('Call `answer` or `delete` before calling `draw`')
+            return self._key
 
-        # make the weight of level n 0 if no keys are of level n
+        # make the weight of a level 0 if there are no keys with that level
         temp_weights = [self._weights[i] * bool(len(self._levels[i])) for i in range(len(self._weights))]
         if sum(temp_weights) == 0:
-            return (None, None)
+            return None
         
-        self._level = random.choices(range(len(self.weights)), weights=temp_weights)[0]
+        self._level = random.choices(range(len(self._weights)), weights=temp_weights)[0]
         self._key = self._levels[self._level].pop_random()
         self._drew = True
-        return (self._key, self._dict_search(self._key))
+        return self._key
 
     def answer(self, correct) -> None:
         '''
-        correct=True if the user answered correctly, otherwise False
+        `correct=True` if the user answered correctly, otherwise `False`
         '''
         if not self._drew:
             raise Exception('Call `draw` before calling answer')
@@ -152,24 +145,20 @@ class Deck:
             else:
                 self._completed_count += 1
                 self._leveldb[self._key] = -1
-        # if the user answered incorrectly and the key's level is greater than 0 ...
-        elif self._level > 0:
-            # ... set its level to 0
+        else:
             self._levels[0].append(self._key)
-            self._levels[self._key] = 0
+            # only update database if the old level wasn't 0
+            if self._level != 0:
+                self._leveldb[self._key] = 0
+
+        self._drew = False
 
     def add(self, key) -> None:
-        # ensures KeyError is raised if key doesn't exist in dict
-        self._dict_search(key)
-
         if key not in self._leveldb:
-            self._levels[1].append(key)
+            self._levels[self._default_level].append(key)
             self._leveldb[key] = self._default_level
 
     def update(self, keys) -> None:
-        for key in keys:
-            self._dict_search(key)
-
         self._levels[self._default_level].extend(keys)
         self._leveldb.update((key, self._default_level) for key in keys)
 
@@ -197,7 +186,73 @@ class Deck:
         returns tuple containing the number of words at each level
         first item is number of deleted cards, last item is number of completed cards, the n items in between are the number of cards at levels 0 to n - 1
         '''
-        return tuple(self._deleted_count, *(len(x) for x in self._levels), self._completed_count)
+        return (self._deleted_count, *tuple(len(level) for level in self._levels), self._completed_count)
+
+
+from django.http import HttpResponse, JsonResponse
+
+class DeckWeb:
+
+    def __init__(
+        self,
+        deck: Deck,
+        dict_search, # function, parameter: key, returns: value of key, raises KeyError if key is not found
+        format_key=lambda x: x, # function, parameter: key, returns: html code formatting the key
+        format_value=lambda x: x # function, parameter: value, returns: html code formatting the value
+    ):
+        if type(deck) != Deck:
+            raise ValueError('Pass a valid Deck object')
+        self._deck = deck
+        self._dict_search = dict_search
+        self._format_key = format_key
+        self._format_value = format_value
+
+    def respond(self, request):
+
+        if request.method == 'POST':
+            try:
+                json_data = json.loads(request.body.replace(b'\\x', b'\\u'))
+                cmd, arg = json_data['cmd'], json_data['arg']
+            except Exception as e:
+                print('Response: invalid post\nError:', e)
+                return JsonResponse('Invalid post')
+
+            response = {'key': None, 'value': None}
+            if cmd == 'draw':
+                if self._deck.draw():
+                    response['key'] = self._format_key(self._deck.draw())
+                    try:
+                        response['value'] = self._format_value(self._dict_search(self._deck.draw()))
+                    except KeyError:
+                        response['value'] = 'KeyError'
+                else:
+                    response['key'] = None
+            elif cmd == 'progress':
+                response['key'] = 'progress'
+                response['value'] = self._deck.progress()
+            elif cmd == 'answer':
+                self._deck.answer(bool(arg))
+            elif cmd == 'delete':
+                self._deck.delete()
+            elif cmd == 'add':
+                response['key'] = 'valid'
+                try:
+                    self._deck.add(arg)
+                    response['value'] = True
+                except KeyError:
+                    response['value'] = False
+            else:
+                raise NotImplementedError()
+
+            print('Response:', response)
+            return JsonResponse(response)
+
+        elif request.method == 'GET':
+            with open('index.html', encoding='utf8') as f:
+                return HttpResponse(f.read())
+        else:
+            return HttpResponse('Invalid request')
+            
 
 if __name__ == '__main__':
     dict = SqliteDict(
@@ -206,7 +261,7 @@ if __name__ == '__main__':
         flag='r',
         decode=json.loads,
     )
-    deck = Deck(lambda key: dict[key], 'levels.db', weights=[100, 50, 10, 1, 0.1])
+    deck = Deck('hsk_levels.db', weights=[1000, 1000, 500, 100, 10, 1])
     from chinesetools import hsk_words
     deck.update(hsk_words)
 

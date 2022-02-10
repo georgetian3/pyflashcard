@@ -1,3 +1,6 @@
 __pycache__
-*.db
+build
 SECRET_KEY
+migrations
+*.db
+*.egg-info

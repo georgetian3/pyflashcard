@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/4.0/ref/settings/
 """
 
 from pathlib import Path
+from django.core.management.utils import get_random_secret_key  
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -19,12 +20,17 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.0/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-with open('SECRET_KEY') as f:
-    SECRET_KEY = f.read()
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+secret_key_file = 'SECRET_KEY'
+
+if Path(secret_key_file).exists():
+    DEBUG = False
+    with open(secret_key_file) as f:
+        SECRET_KEY = f.read()
+else:
+    DEBUG = True
+    SECRET_KEY = get_random_secret_key()
+
 
 ALLOWED_HOSTS = []
 
@@ -38,13 +44,14 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'pyflashcard_app'
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
+    #'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
@@ -71,7 +78,7 @@ TEMPLATES = [
 WSGI_APPLICATION = 'pyflashcard.wsgi.application'
 
 
-# Database
+""" # Database
 # https://docs.djangoproject.com/en/4.0/ref/settings/#databases
 
 DATABASES = {
@@ -79,7 +86,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'db.sqlite3',
     }
-}
+} """
 
 
 # Password validation
