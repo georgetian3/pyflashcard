@@ -32,7 +32,7 @@ else:
     SECRET_KEY = get_random_secret_key()
 
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['georgetian.com', '59.66.244.22', 'localhost']
 
 
 # Application definition
