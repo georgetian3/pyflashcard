@@ -24,12 +24,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 secret_key_file = 'SECRET_KEY'
 allowed_hosts_file = 'ALLOWED_HOSTS'
 
-if Path(secret_key_file).exists():
-    
-else:
-    DEBUG = True
-    SECRET_KEY = get_random_secret_key()
-
 try:
     with open(secret_key_file) as f:
         SECRET_KEY = f.read()
