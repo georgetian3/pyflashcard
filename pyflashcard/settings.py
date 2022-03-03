@@ -22,17 +22,29 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 secret_key_file = 'SECRET_KEY'
+allowed_hosts_file = 'ALLOWED_HOSTS'
 
 if Path(secret_key_file).exists():
-    DEBUG = False
-    with open(secret_key_file) as f:
-        SECRET_KEY = f.read()
+    
 else:
     DEBUG = True
     SECRET_KEY = get_random_secret_key()
 
+try:
+    with open(secret_key_file) as f:
+        SECRET_KEY = f.read()
+    DEBUG = False
+except FileNotFoundError:
+    SECRET_KEY = get_random_secret_key()
+    DEBUG = True
 
-ALLOWED_HOSTS = ['georgetian.com', '59.66.244.22', 'localhost']
+try:
+    with open(allowed_hosts_file) as f:
+        ALLOWED_HOSTS = [line.strip() for line in f.readlines()]
+except FileNotFoundError:
+    ALLOWED_HOSTS = ['localhost']
+
+
 
 
 # Application definition
