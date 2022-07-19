@@ -1,9 +1,11 @@
 import json
+import queue
 import random
+from sys import maxsize
 from sqlitedict import SqliteDict
 
 
-class RandomList:
+""" class RandomList:
     # O(1) insertion of an item and O(1) pop of a random item
     def __init__(self, items = []):
         self._items = list(items)
@@ -25,31 +27,23 @@ class RandomList:
     def __list__(self):
         return self._items
     def __iter__(self):
-        return self._items.__iter__()
-
-class Deck:
+        return self._items.__iter__() """
 
 
-        
-        
+class RandomList(list):
+    # O(1) insertion of an item and O(1) pop of a random item
+    def pop_random(self):
+        # swaps the randomly selected element to the end of the list to ensure O(1) pop
+        index = random.randint(0, len(self) - 1)
+        item = self[index]
+        self[index] = self[-1]
+        self.pop()
+        return item
 
-    def __init__(self, levels_file, default_level=1, weights=None):
 
-        self._drew = False
+class DeckBuilder:
 
-        # no need to know the words that have been deleted or completed, only the amount of each
-        self._deleted_count = 0
-        self._completed_count = 0
-
-        '''
-        levels_file: an SQLite database with a table named `levels`, which has two columns:
-            column 1: contains unique keys that identify each flashcard
-            column 2: contains the level of each flashcard:
-                -2: deleted
-                -1: completed
-                >= 0: actual level
-        In addition to keys, the weights of each level is stored under the key __weights__ with the value being a list from 0 to n - 1 of real numbers representing the relative probability of selecting that level
-        '''
+    def __init__(self, levels_file, default_level=1, weights=[]):
 
         self._leveldb = SqliteDict(
             filename=levels_file,
@@ -58,35 +52,21 @@ class Deck:
             encode=json.dumps,
             decode=json.loads,
         )
-        
-        if weights:
-            if len(weights) > 0:
-                self._leveldb['__weights__'] = weights
-                self._weights = weights
-            else:
-                raise ValueError('At least one weight is needed')
-        else:
-            self._weights = self._leveldb['__weights__']
 
+        self._weights = SqliteDict(
+            filename=levels_file,
+            tablename='weights',
+            decode=json.loads,
+        )['weights']
+
+        if len(weights) > 0:
+            self._leveldb['__weights__'] = weights
+            self._weights = weights
+        else:
+            raise ValueError('At least one weight is needed')
 
         self.set_default_level(default_level)
 
-        self._levels = [RandomList() for _ in range(len(self._weights))]
-
-        for key, level in self._leveldb.items():
-
-            if key == '__weights__':
-                continue
-
-            if level >= len(self._weights) or level < -2:
-                raise ValueError(f'Key "{key}" has invalid level "{level}"')
-            elif 0 <= level < len(self._weights):
-                self._levels[level].append(key)
-            elif level == -1:
-                self._completed_count += 1
-            elif level == -2:
-                self._deleted_count += 1
- 
     def set_default_level(self, new_default_level):
         if new_default_level < 0:
             raise ValueError('Default level must be positive')
@@ -110,48 +90,115 @@ class Deck:
             self._levels.extend(RandomList() for _ in range(len(self._levels), len(new_weights)))
         self._weights = new_weights
 
+class Deck:
+
+    def __init__(self,
+            levels_file,
+            default_level=1,
+            weights=None,
+            history_size=5):
+
+        # no need to know the words that have been deleted or completed, only the amount of each
+        self._deleted_count = 0
+        self._completed_count = 0
+
+        '''
+        levels_file: an SQLite database with tables `weights` and `levels`
+        `levels`:
+            column 1: contains unique keys that identify each flashcard
+            column 2: contains the level of each flashcard:
+                -2: deleted
+                -1: completed
+              >= 0: actual level
+        `weights`: weight of each level is stored under the key `weights`
+        with the value being a list where each element are real numbers
+        in the range [0, n - 1] representing the relative probability of
+        selecting that level
+        '''
+
+        self._leveldb = SqliteDict(
+            filename=levels_file,
+            tablename='levels',
+            autocommit=True,
+            encode=json.dumps,
+            decode=json.loads,
+        )
+
+        self._weights = SqliteDict(
+            filename=levels_file,
+            tablename='weights',
+            decode=json.loads,
+        )['weights']
+        
+        self._weights = self._leveldb['__weights__']
+        if len(self._weights) < 1:
+            raise ValueError('At least one weight is needed')
+
+        self._levels = [RandomList() for _ in range(len(self._weights))]
+
+        for key, level in self._leveldb.items():
+            if not -2 <= level < len(self._weights):
+                raise ValueError(f'Key "{key}" has invalid level "{level}"')
+            elif 0 <= level < len(self._weights):
+                self._levels[level].append(key)
+            elif level == -1:
+                self._completed_count += 1
+            elif level == -2:
+                self._deleted_count += 1
+
+        self._drawn = {}
+        self._history_size = history_size
+        self._history_set = set()
+        self._history_queue = queue(maxsize=history_size)
+
 
     def draw(self) -> str:
         '''
         Returns a string of the drawn key; returns `None` if all keys are either deleted or completed
         '''
-        # if a word was already drawn, then return the same wrod
-        if self._drew:
-            return self._key
 
         # make the weight of a level 0 if there are no keys with that level
         temp_weights = [self._weights[i] * bool(len(self._levels[i])) for i in range(len(self._weights))]
         if sum(temp_weights) == 0:
             return None
         
-        self._level = random.choices(range(len(self._weights)), weights=temp_weights)[0]
-        self._key = self._levels[self._level].pop_random()
-        self._drew = True
-        return self._key
+        level = random.choices(range(len(self._weights)), weights=temp_weights)[0]
+        key = self._levels[level].pop_random()
 
-    def answer(self, correct) -> None:
+        self._drawn[key] = level
+
+        if len(self._history_queue) >= self._history_size:
+            old_key = self._history_queue.get()
+            self._history_set.remove(old_key)
+
+        self._history_queue.put(key)
+        self._history_set.add(key)
+
+        return key
+
+    def answer(self, key, correct) -> None:
         '''
         `correct=True` if the user answered correctly, otherwise `False`
         '''
-        if not self._drew:
-            raise Exception('Call `draw` before calling answer')
+        if key not in self._drawn:
+            raise Exception(f'{key} has not been drawn')
 
         if correct:
             # if the key's level is not already at max, increment the key's level
-            if self._level + 1 < len(self._weights):
+            if self._drawn[key] + 1 < len(self._weights):
                 self._levels[self._level + 1].append(self._key)
                 self._leveldb[self._key] += 1
             # else mark the key as completed
             else:
                 self._completed_count += 1
-                self._leveldb[self._key] = -1
+                self._leveldb[key] = -1
         else:
-            self._levels[0].append(self._key)
+            self._levels[0].append(key)
             # only update database if the old level wasn't 0
-            if self._level != 0:
+            if self._drawn[key] != 0:
                 self._leveldb[self._key] = 0
 
-        self._drew = False
+        del self._drawn[key]
 
     def add(self, key) -> None:
         if key not in self._leveldb:
@@ -162,13 +209,9 @@ class Deck:
         self._levels[self._default_level].extend(keys)
         self._leveldb.update((key, self._default_level) for key in keys)
 
-    def delete(self) -> None:
-        '''
-        deletes the currently drawn card
-        '''
+    def delete(self, key) -> None:
+        self._leveldb[key] = -2
         self._deleted_count += 1
-        self._leveldb[self._key] = -2
-        self._drew = False
 
     def reset(self) -> None:
         '''
@@ -255,7 +298,10 @@ class DeckWeb:
             
 
 if __name__ == '__main__':
-    dict = SqliteDict(
+    a = RandomList([6, 4])
+    a.append(5)
+    print(a)
+    """ dict = SqliteDict(
         filename='cedict.db',
         tablename='dict',
         flag='r',
@@ -263,5 +309,5 @@ if __name__ == '__main__':
     )
     deck = Deck('hsk_levels.db', weights=[1000, 1000, 500, 100, 10, 1])
     from chinesetools import hsk_words
-    deck.update(hsk_words)
+    deck.update(hsk_words) """
 
